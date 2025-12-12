@@ -85,6 +85,26 @@ class OrderItem(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     price = db.Column(db.Float, nullable=False)
 
+# Root route
+@app.route('/')
+def root():
+    """Root endpoint with API information"""
+    return jsonify({
+        'service': 'Cloudnautic Shop Backend API',
+        'version': '1.0.0',
+        'status': 'running',
+        'endpoints': {
+            'health': '/health',
+            'products': '/api/products',
+            'categories': '/api/categories',
+            'auth': {
+                'register': '/api/auth/register',
+                'login': '/api/auth/login'
+            },
+            'orders': '/api/orders'
+        }
+    }), 200
+
 # Health check endpoint
 @app.route('/health')
 def health_check():
