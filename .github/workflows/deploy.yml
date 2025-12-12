@@ -1,0 +1,209 @@
+name: Deploy to EKS
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Images"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+
+env:
+  AWS_REGION: us-west-2
+  EKS_CLUSTER_NAME: cloudnautic-shop-cluster
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Install helm
+      uses: azure/setup-helm@v3
+      with:
+        version: '3.12.0'
+
+    - name: Update kube config
+      run: |
+        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+    - name: Verify cluster connection
+      run: |
+        kubectl cluster-info
+        kubectl get nodes
+
+    - name: Create namespace if not exists
+      run: |
+        kubectl create namespace cloudnautic --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Deploy MySQL (if not exists)
+      run: |
+        if ! kubectl get deployment mysql -n cloudnautic &> /dev/null; then
+          echo "Deploying MySQL..."
+          kubectl apply -f k8s/secrets/
+          kubectl apply -f k8s/deployments/mysql-deployment.yaml
+          
+          # Wait for MySQL to be ready
+          kubectl rollout status deployment/mysql -n cloudnautic --timeout=300s
+        else
+          echo "MySQL already exists, skipping deployment"
+        fi
+
+    - name: Apply ConfigMaps and Secrets
+      run: |
+        kubectl apply -f k8s/configmaps/
+        kubectl apply -f k8s/secrets/
+
+    - name: Deploy Backend
+      run: |
+        # Update image tags to latest
+        sed -i "s|atuljkamble/cloudnautic-backend:latest|atuljkamble/cloudnautic-backend:${{ github.sha }}|g" k8s/deployments/backend-deployment.yaml || true
+        
+        kubectl apply -f k8s/deployments/backend-deployment.yaml
+        kubectl rollout status deployment/backend -n cloudnautic --timeout=300s
+
+    - name: Deploy Frontend
+      run: |
+        # Update image tags to latest
+        sed -i "s|atuljkamble/cloudnautic-frontend:latest|atuljkamble/cloudnautic-frontend:${{ github.sha }}|g" k8s/deployments/frontend-deployment.yaml || true
+        
+        kubectl apply -f k8s/deployments/frontend-deployment.yaml
+        kubectl rollout status deployment/frontend -n cloudnautic --timeout=300s
+
+    - name: Deploy Ingress
+      run: |
+        # Install NGINX Ingress Controller if not exists
+        if ! helm list -n ingress-nginx | grep -q ingress-nginx; then
+          echo "Installing NGINX Ingress Controller..."
+          helm upgrade --install ingress-nginx ingress-nginx \
+            --repo https://kubernetes.github.io/ingress-nginx \
+            --namespace ingress-nginx --create-namespace \
+            --set controller.service.type=LoadBalancer
+          
+          # Wait for ingress controller to be ready
+          kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=300s
+        fi
+        
+        kubectl apply -f k8s/ingress/
+
+    - name: Apply HPA
+      run: |
+        kubectl apply -f k8s/hpa/
+
+    - name: Get deployment status
+      run: |
+        echo "=== Deployment Status ==="
+        kubectl get all -n cloudnautic
+        echo ""
+        echo "=== Ingress Status ==="
+        kubectl get ingress -n cloudnautic
+        echo ""
+        echo "=== Service Endpoints ==="
+        kubectl get svc -n cloudnautic
+
+    - name: Wait for LoadBalancer and get external IP
+      run: |
+        echo "Waiting for LoadBalancer external IP..."
+        kubectl wait --for=condition=ready service/ingress-nginx-controller -n ingress-nginx --timeout=300s || true
+        
+        EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+        if [ -z "$EXTERNAL_IP" ]; then
+          EXTERNAL_IP=$(kubectl get svc ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        fi
+        
+        echo "External IP/Hostname: $EXTERNAL_IP"
+        if [ ! -z "$EXTERNAL_IP" ]; then
+          echo "Application will be available at: http://$EXTERNAL_IP"
+          echo "Add this to your /etc/hosts file for local testing:"
+          echo "$EXTERNAL_IP shop.cloudnautic.local"
+        fi
+
+  health-check:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: success()
+
+    steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+
+    - name: Update kube config
+      run: |
+        aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+
+    - name: Health check
+      run: |
+        echo "Performing health checks..."
+        
+        # Check if pods are running
+        kubectl wait --for=condition=Ready pod -l app=backend -n cloudnautic --timeout=300s
+        kubectl wait --for=condition=Ready pod -l app=frontend -n cloudnautic --timeout=300s
+        
+        # Get service status
+        kubectl get pods -n cloudnautic
+        kubectl get svc -n cloudnautic
+        
+        # Port forward and test backend health endpoint
+        kubectl port-forward svc/backend-svc 8080:5000 -n cloudnautic &
+        sleep 5
+        
+        # Test backend health
+        if curl -f http://localhost:8080/health; then
+          echo "✅ Backend health check passed"
+        else
+          echo "❌ Backend health check failed"
+          exit 1
+        fi
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [deploy, health-check]
+    if: always()
+
+    steps:
+    - name: Notify deployment status
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+      if: env.SLACK_WEBHOOK_URL != null

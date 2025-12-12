@@ -1,0 +1,124 @@
+.App {
+  text-align: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  padding: 20px;
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Custom styles for Cloudnautic Shop */
+.product-card {
+  transition: transform 0.2s;
+}
+
+.product-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.cart-item {
+  border-left: 4px solid #007bff;
+}
+
+.navbar-brand {
+  font-weight: bold;
+  font-size: 1.5rem;
+}
+
+.btn-checkout {
+  font-size: 1.1rem;
+  padding: 0.5rem 2rem;
+}
+
+.loading-spinner {
+  margin: 2rem auto;
+}
+
+.product-image {
+  height: 200px;
+  object-fit: cover;
+  width: 100%;
+}
+
+.price-display {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #28a745;
+}
+
+.stock-badge {
+  font-size: 0.8rem;
+}
+
+.cart-summary {
+  background: #f8f9fa;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+.order-card {
+  border-left: 4px solid #28a745;
+}
+
+.footer {
+  margin-top: 3rem;
+  padding: 2rem 0;
+  background: #f8f9fa;
+  border-top: 1px solid #dee2e6;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .navbar-brand {
+    font-size: 1.2rem;
+  }
+  
+  .btn-checkout {
+    font-size: 1rem;
+    padding: 0.4rem 1rem;
+  }
+}
+
+/* Toast customization */
+.Toastify__toast {
+  font-family: inherit;
+}
+
+.Toastify__toast--success {
+  background: #28a745;
+}
+
+.Toastify__toast--error {
+  background: #dc3545;
+}
+
+.Toastify__toast--info {
+  background: #17a2b8;
+}

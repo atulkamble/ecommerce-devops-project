@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudnautic
+  labels:
+    name: cloudnautic
+    environment: production

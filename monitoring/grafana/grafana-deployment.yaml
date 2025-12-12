@@ -1,0 +1,225 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      securityContext:
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.1.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: grafana-secret
+              key: admin-password
+        - name: GF_INSTALL_PLUGINS
+          value: "grafana-kubernetes-app"
+        resources:
+          requests:
+            memory: 200Mi
+            cpu: 100m
+          limits:
+            memory: 400Mi
+            cpu: 200m
+        volumeMounts:
+        - name: grafana-storage
+          mountPath: /var/lib/grafana
+        - name: grafana-datasources
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: grafana-dashboards-config
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: grafana-dashboards
+          mountPath: /var/lib/grafana/dashboards
+      volumes:
+      - name: grafana-storage
+        emptyDir: {}
+      - name: grafana-datasources
+        configMap:
+          name: grafana-datasources
+      - name: grafana-dashboards-config
+        configMap:
+          name: grafana-dashboard-config
+      - name: grafana-dashboards
+        configMap:
+          name: grafana-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: grafana-secret
+  namespace: monitoring
+type: Opaque
+data:
+  admin-password: YWRtaW4xMjM= # admin123
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+data:
+  prometheus.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus:9090
+        isDefault: true
+        access: proxy
+        editable: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-config
+  namespace: monitoring
+data:
+  dashboard.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+data:
+  cloudnautic-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Cloudnautic Shop Dashboard",
+        "tags": ["cloudnautic"],
+        "style": "dark",
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Service Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"cloudnautic-backend\"}",
+                "legendFormat": "Backend Status"
+              },
+              {
+                "expr": "up{job=\"cloudnautic-frontend\"}",
+                "legendFormat": "Frontend Status"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "mappings": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "red",
+                        "text": "DOWN"
+                      },
+                      "1": {
+                        "color": "green",
+                        "text": "UP"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            },
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 0
+            }
+          },
+          {
+            "id": 2,
+            "title": "Memory Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "container_memory_working_set_bytes{pod=~\"backend-.*|frontend-.*\"} / 1024 / 1024",
+                "legendFormat": "{{ pod }}"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Memory (MB)"
+              }
+            ],
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 0
+            }
+          },
+          {
+            "id": 3,
+            "title": "CPU Usage",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{pod=~\"backend-.*|frontend-.*\"}[5m]) * 100",
+                "legendFormat": "{{ pod }}"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "CPU %"
+              }
+            ],
+            "gridPos": {
+              "h": 8,
+              "w": 24,
+              "x": 0,
+              "y": 8
+            }
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "5s"
+      }
+    }

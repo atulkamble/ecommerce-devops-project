@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: cloudnautic
+  labels:
+    app: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: backend
+        image: atuljkamble/cloudnautic-backend:latest
+        ports:
+        - containerPort: 5000
+        env:
+        - name: DATABASE_URL
+          value: "mysql://$(MYSQL_USER):$(MYSQL_PASSWORD)@mysql-svc:3306/$(MYSQL_DATABASE)"
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: username
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: password
+        - name: MYSQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: mysql-secret
+              key: database
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: jwt-secret
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: app-secrets
+              key: flask-secret
+        - name: FLASK_ENV
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: FLASK_ENV
+        - name: PORT
+          valueFrom:
+            configMapKeyRef:
+              name: backend-config
+              key: PORT
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox:1.35
+        command: ['sh', '-c', 'until nc -z mysql-svc 3306; do echo "Waiting for MySQL..."; sleep 2; done;']
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-svc
+  namespace: cloudnautic
+  labels:
+    app: backend
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 5000
+      targetPort: 5000
+      protocol: TCP
+  type: ClusterIP
